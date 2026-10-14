@@ -1,0 +1,6 @@
+.pi
+__pycache__/
+*.py[co]
+node_modules/
+*.tgz
+.DS_Store

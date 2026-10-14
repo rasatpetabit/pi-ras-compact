@@ -1,0 +1,80 @@
+{
+  "name": "pi-ras-compact",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Jev (TypeSafe System One) verbatim compaction for Pi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rasatpetabit/pi-ras-compact.git"
+  },
+  "homepage": "https://github.com/rasatpetabit/pi-ras-compact#readme",
+  "bugs": {
+    "url": "https://github.com/rasatpetabit/pi-ras-compact/issues"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:unit": "node --import tsx --test test/*.test.ts",
+    "release:verify": "node --import tsx scripts/verify-public-release.mts"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "smol-toml": "1.9.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "files": [
+    "src/",
+    "config/",
+    "decision-service/server.py",
+    "decision-service/candidates.py",
+    "decision-service/clm_schema.py",
+    "decision-service/CLM-LICENSE",
+    "decision-service/README.md",
+    "README.md",
+    "LICENSE",
+    "VENDORED.md"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "compaction",
+    "jev",
+    "system-one"
+  ],
+  "exports": {
+    ".": "./src/pi/extension.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/pi/extension.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-tui": "0.99.1",
+    "tsx": "4.22.4",
+    "typebox": "1.3.27"
+  }
+}

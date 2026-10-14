@@ -1,0 +1,56 @@
+# Jev (TypeSafe System One) compaction for Pi — the single config.
+# Read by pi-jev/src/client/config.ts at every compaction; edits apply without
+# a restart. A missing, unparseable or invalid file is a compaction failure, not
+# an opt-out: headless sessions cancel and the CLI exits nonzero, interactive
+# sessions prompt (Retry / Use Pi's summary / Cancel), and Pi's built-in summary
+# runs only on `enabled = false` or an explicit choice. Unknown keys are rejected.
+# `compaction.prompt_timeout_ms` is the only optional key: absent, RPC does not
+# prompt at all and cancels like a headless run. The endpoint and the key
+# variable are fixed in code, not here.
+
+[api]
+model = "jev-1.13.0"        # exact version; aliases such as jev-latest are rejected
+# One attempt's timeout, cut to what the call's retry budget has left.
+timeout_ms = 20000
+# Retries follow TypeSafe's documented RetryPolicy defaults
+# (docs.typesafe.ai/sdk/python/api/retries): HTTP 408, 429 and 5xx (529 is
+# "system_overloaded"), network errors and timeouts are retried; Retry-After and
+# retry-after-ms are honoured.
+max_retries = 2             # after the first attempt; 0 disables
+retry_backoff_ms = 500      # first delay, doubled per retry
+retry_backoff_max_ms = 5000
+retry_jitter = 0.25         # fraction of each delay randomly subtracted
+retry_budget_ms = 30000     # the whole call: attempts and delays
+
+# Obsolete: the daily Jev cap was removed. The new code ignores this table; it
+# stays only so the PREVIOUS code, which REQUIRES it, still loads during a
+# rollout. Remove it once every running session has reloaded onto the new code.
+[budget]
+daily_requests = 1_000_000
+daily_input_tokens = 10_000_000_000
+
+[telemetry]
+path = "~/.local/state/jev/calls.jsonl"   # compactions.jsonl is written beside it
+
+[compaction]
+enabled = true              # false = Pi's built-in summary, no restart
+max_share = 0.5             # summary budget = max_share x (context window - reserveTokens)
+max_after_share = 0.35      # share of the context that may remain after compaction; 0.35 is the interim wrapper's measured median (Pi's summary: 0.20)
+keep_threshold = 0.5
+borderline = 0.1            # upstream default
+threshold_schedule = [0.5, 0.65, 0.8]
+pins = ["user", "error", "modify", "boundary", "decision", "instruction"]   # all 6 standard pin classes enabled out of the box
+modify_tools = ["edit", "write", "edit_lines"]
+pin_generations = 3         # initial; the eval sets it
+truncate_head_chars = 300   # upstream default
+max_state_tokens = 25_000   # upstream default
+max_request_tokens = 30_000 # upstream default
+
+[render]
+max_arg_chars = 160
+max_arg_chars_pinned = 8000
+max_file_list_entries = 200
+
+[eval]
+sample_size = 60
+recall_margin = 0.02

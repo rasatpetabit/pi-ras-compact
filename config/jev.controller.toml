@@ -1,0 +1,21 @@
+# Provisional quality policy, NOT a measured quality cliff. Older sessions ignore this sibling.
+mode = "shadow"
+layout = true
+evidence = "config/jev.controller.toml"
+max_atoms = 4096
+max_metadata_bytes = 1048576
+promotion_cycles = 3
+[policy]
+working_window_share = 0.35
+opportunity_working_share = 0.60
+target_working_share = 0.50
+safety_window_share = 0.02
+rearm_working_share = 0.10
+horizon_requests = 4
+horizon_ms = 120000
+growth_samples = 8
+economic_margin = 0.10
+max_band_excursion_requests = 2
+max_band_excursion_ms = 120000
+# Upper uncertainty on a rendered candidate's projected context at economic commit (provisional).
+projection_error_share = 0.15
