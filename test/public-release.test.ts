@@ -2,7 +2,8 @@
  * Packaging and leak regression test for the public release. Fast checks only:
  * publishable package metadata, negative containment of internal artefacts through
  * both release surfaces, a full forbidden-token scan of everything the exporter
- * ships, and the standalone config load of the bundled `config/jev.toml`.
+ * ships, the standalone config load of the bundled `config/jev.toml`, and the
+ * exported README disclosure that H2O candidate evidence is not in the release.
  *
  * The internal artefact names below are built from joined fragments, so this file
  * (which the exporter ships) contains none of the forbidden literals it checks for.
@@ -179,4 +180,53 @@ test('the bundled config loads in the exported snapshot with no parent-monorepo 
     else delete process.env.JEV_CONFIG_PATH;
     rmSync(join(snapshot, 'node_modules'), { force: true });
   }
+});
+
+/**
+ * The known bad pointer names a private receipt the exporter deliberately omits.
+ * Fragments keep that relative path from being a contiguous copy-paste target here.
+ */
+const PRIVATE_H2O_EVIDENCE = ['eval', 'h2o-cutover-20261112', 'README.md'].join('/');
+const PRIVATE_H2O_CONFIG = ['config', 'jev.backend.h2o-candidate.toml'].join('/');
+const PRIVATE_FLEET_DISCLOSURE = 'PRIVATE FLEET ARTIFACTS NOT SHIPPED IN THE STANDALONE RELEASE';
+
+test('exported README identifies H2O candidate evidence as private and not shipped', () => {
+  const scratch = scratchDir('pi-jev-readme-evidence-');
+  const snapshot = join(scratch, 'snapshot');
+  const exported = exportPublicRelease(ROOT, snapshot);
+
+  assert.ok(!exported.files.includes(PRIVATE_H2O_EVIDENCE), `${PRIVATE_H2O_EVIDENCE} must not be exported`);
+  assert.ok(!existsSync(join(snapshot, ...PRIVATE_H2O_EVIDENCE.split('/'))), `${PRIVATE_H2O_EVIDENCE} must be absent from the snapshot`);
+  assert.ok(!exported.files.includes(PRIVATE_H2O_CONFIG), `${PRIVATE_H2O_CONFIG} must not be exported`);
+  assert.ok(!existsSync(join(snapshot, ...PRIVATE_H2O_CONFIG.split('/'))), `${PRIVATE_H2O_CONFIG} must be absent from the snapshot`);
+
+  const readme = readFileSync(join(snapshot, 'README.md'), 'utf8');
+  const heading = '## Live local backend\n';
+  const start = readme.indexOf(heading);
+  assert.notEqual(start, -1, 'the OpenJev fleet section must remain in the exported README');
+  const rest = readme.slice(start);
+  const nextHeading = rest.slice(heading.length).search(/\n## /);
+  const section = nextHeading === -1 ? rest : rest.slice(0, heading.length + nextHeading);
+  const flat = section.replace(/\s+/g, ' ');
+
+  const problems: string[] = [];
+  const pointerAt = section.indexOf(PRIVATE_H2O_EVIDENCE);
+  if (pointerAt !== -1) {
+    const excerpt = section.slice(Math.max(0, pointerAt - 90), pointerAt + PRIVATE_H2O_EVIDENCE.length + 48).replace(/\s+/g, ' ');
+    problems.push(`misleading private-artifact pointer to a file the export omits: ${excerpt}`);
+  }
+  const identifiedAt = flat.indexOf('H2O candidate config');
+  const identified = identifiedAt === -1 ? '' : flat.slice(identifiedAt, identifiedAt + 420);
+  if (!identified.includes(PRIVATE_H2O_CONFIG) || !identified.includes('qualification evidence') || !identified.includes(PRIVATE_FLEET_DISCLOSURE)) {
+    problems.push(`H2O candidate config and qualification evidence must be identified as ${PRIVATE_FLEET_DISCLOSURE}`);
+  }
+  if (!flat.includes('The candidate is unqualified')) problems.push('missing public summary: the candidate is unqualified');
+  if (!flat.includes('client/relay compatibility is not production readiness')) {
+    problems.push('missing public summary: client/relay compatibility is not production readiness');
+  }
+  if (!section.includes('The fleet backend remains **OpenJev 27B**')) problems.push('OpenJev fleet route text was dropped');
+  if (!section.includes('service failure (`http`)') || !section.includes('malformed answer is `parse`') || !section.includes('does not take that fallback')) {
+    problems.push('failure-classification text was dropped');
+  }
+  assert.deepEqual(problems, []);
 });

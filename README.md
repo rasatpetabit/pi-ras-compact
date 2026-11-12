@@ -321,10 +321,10 @@ this deterministic result, while failures on paths requiring scores still cancel
 ## Live local backend
 
 The fleet backend remains **OpenJev 27B**, with TypeSafe fallback and the qualified OpenAI
-Decisions charter gate unchanged. The unqualified H2O proposal is preserved separately in
-`config/jev.backend.h2o-candidate.toml`; that filename is not auto-loaded. Client support and the
-relay unit do not qualify or activate it. See `eval/h2o-cutover-20261112/README.md` for the evidence
-and outstanding RTX outcome.
+Decisions charter gate unchanged. The H2O candidate config (`config/jev.backend.h2o-candidate.toml`,
+not auto-loaded) and its qualification evidence are PRIVATE FLEET ARTIFACTS NOT SHIPPED IN THE
+STANDALONE RELEASE. The candidate is unqualified, and client/relay compatibility is not production
+readiness. Client support and the relay unit do not qualify or activate it.
 
 `local_revision` pins the checkpoint. An answer from any other revision behind the
 same endpoint and name is a service failure (`http`), so the configured TypeSafe fallback
