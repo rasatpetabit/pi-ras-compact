@@ -134,7 +134,7 @@ test('compact calls append one args-cut note only when an argument is elided', (
 });
 
 test('the summary header directs exact jev_expand recovery rather than re-running a tool', () => {
-  assert.equal(SUMMARY_HEADER, 'Earlier conversation retained verbatim by Jev selective compaction. A cut or stubbed tool result or argument names the jev_expand call that restores it exactly; call it instead of re-running the tool.');
+  assert.equal(SUMMARY_HEADER, 'Earlier conversation retained verbatim by Jev selective compaction. A cut or stubbed tool result or argument names the jev_expand call that restores it exactly; call it instead of re-running the tool. Counts in this summary describe what was dropped or stubbed, not remaining context window; never infer or assert your context occupancy from them.');
   assert.ok(!SUMMARY_HEADER.includes('re-run a tool'));
 });
 

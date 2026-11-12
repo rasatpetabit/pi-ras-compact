@@ -586,10 +586,11 @@ test('step 4 records its threshold only for a segment it changes, and step 5 rec
     segments: [1, 2, 3, 4].map(n => ({ kind: 'assistant' as const, text: para(n), pin: null, gen: 1 })),
   };
   // 0.6 survives the configured 0.5 and is dropped by the schedule's 0.65. The whole kept
-  // summary is 486 tokens (measured); 400 holds three paragraphs, so the schedule drops only
-  // the oldest and then stops.
+  // summary is 535 tokens (measured); 437 holds three paragraphs, so the schedule drops only
+  // the oldest and then stops. (437 is the old 400 plus the 37 tokens the header's
+  // context-occupancy clarification adds to the summary overhead.)
   const scheduled = await compactSpan(
-    input({ previous, span: [user('go')], goal: 'go', budgetTokens: 400 }),
+    input({ previous, span: [user('go')], goal: 'go', budgetTokens: 437 }),
     options,
     new FakeAsker(textKeep(0.6)),
   );

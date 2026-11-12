@@ -19,7 +19,9 @@ test('existing config remains TypeSafe; local selection requires explicit endpoi
   assert.equal(missing.config, undefined);
   assert.ok(missing.errors.some(error => error.startsWith('api.local_endpoint')));
   assert.ok(missing.errors.some(error => error.startsWith('api.local_model')));
-  for (const model of ['clm', 'openjev', 'anyjev']) {
+  // h2o-lightning-4b is the live RTX H2O scorer (jev-h2o.service): the cutover candidate
+  // selects it with its own revision pin, never a free-form model string.
+  for (const model of ['clm', 'openjev', 'anyjev', 'h2o-lightning-4b']) {
     const good = configured(localFields.replace('local_model = "clm"', `local_model = "${model}"`));
     assert.ok(good.config, JSON.stringify(good.errors));
     assert.equal(effectiveAskerModel(good.config), model);

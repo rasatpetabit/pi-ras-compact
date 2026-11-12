@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -453,6 +454,35 @@ test('fileNote handles matching, changed, deleted, unreadable files and @ prefix
 
     // 8. Tool call without path argument: returns undefined
     assert.equal(fileNote('read', {}, 'some text', dir), undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fileNote skips the disk comparison explicitly for over-limit and non-regular files', { timeout: 20000 }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jev-filenote-skip-'));
+  try {
+    // 1. A write whose file exceeds the comparison limit is never read for the equality note.
+    const big = join(dir, 'big.bin');
+    writeFileSync(big, 'x'.repeat(EXPAND_MAX_LIMIT + 1));
+    const over = fileNote('write', { path: big, content: 'x'.repeat(EXPAND_MAX_LIMIT + 1) }, 'ok', undefined);
+    assert.equal(over, `NOTE: ${big} is larger than the ${EXPAND_MAX_LIMIT}-byte comparison limit; it was not compared with what this call saw; re-read it before any edit.`);
+
+    // 2. A directory is a non-regular file: no read is attempted at all.
+    const noteDir = fileNote('write', { path: dir, content: 'x' }, 'ok', undefined);
+    assert.equal(noteDir, `NOTE: ${dir} is not a regular file; it was not compared with what this call saw; re-read it before any edit.`);
+
+    // 3. A FIFO must never be opened for the note: comparing it would block the whole tool.
+    const fifo = join(dir, 'answer-pipe');
+    const made = spawnSync('mkfifo', [fifo]);
+    assert.equal(made.status, 0, 'mkfifo available');
+    const fifoNote = fileNote('read', { path: fifo }, 'anything', undefined);
+    assert.equal(fifoNote, `NOTE: ${fifo} is not a regular file; it was not compared with what this call saw; re-read it before any edit.`);
+
+    // 4. A file exactly at the limit is still compared, so the bound only covers over-limit files.
+    const edge = join(dir, 'edge.bin');
+    writeFileSync(edge, 'y'.repeat(EXPAND_MAX_LIMIT));
+    assert.equal(fileNote('write', { path: edge, content: 'y'.repeat(EXPAND_MAX_LIMIT) }, 'ok', undefined), `NOTE: ${edge} on disk still matches what this call saw.`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

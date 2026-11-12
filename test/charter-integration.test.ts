@@ -8,7 +8,7 @@ import { JevError } from '../src/client/jev-client.js';
 import { EXPAND_TOOL_NAME } from '../src/pi/expand-tool.js';
 import { allZero, FakeAsker } from './support/fake-asker.js';
 import { testConfig } from './support/config.js';
-import { piCtx, piEvent, piUser, testDeps } from './support/pi-event.js';
+import { piCall, piCtx, piEvent, piUser, testDeps } from './support/pi-event.js';
 
 const compactionOf = (result: HookResult) => {
   assert.ok(result && 'compaction' in result, `expected a compaction, got ${JSON.stringify(result)}`);
@@ -57,6 +57,39 @@ test('the charter carries every operator message and answer before the compactio
   assert.equal(c.details.jev.charter_stats.said, 2);
   assert.equal(c.details.jev.charter_stats.answered, 1);
   assert.equal(c.details.jev.charter_stats.pasted, 1);
+});
+
+test('a currently pinned errored or empty AUQ round survives even when the judge rejects the pool', async () => {
+  // The charter carries only ANSWERED rounds verbatim (captureCharter skips errored and empty
+  // results). The pool exclusion must match that coverage: a round the charter did not capture
+  // stays in the pool, visible in the summary, instead of vanishing from every rendered surface.
+  // The rounds sit in the compacted span AND in the branch the charter is captured from, exactly
+  // as a live session has them. This assertion is one rendered generation. Carry reload, a second
+  // compaction and jev_expand are test/compact-boundary.test.ts.
+  const ERRORED_Q = 'Should I delete the production database before the migration?';
+  const ERRORED_A = 'ask_user_question is not available in this mode';
+  const EMPTY_Q = 'Which retry budget should the relay use?';
+  const errored = piCall('askErr', 'ask_user_question', { questions: [{ question: ERRORED_Q }] }, ERRORED_A, true);
+  const empty = piCall('askEmpty', 'ask_user_question', { questions: [{ question: EMPTY_Q }] }, '');
+  const answered = piCall('ask2', 'ask_user_question', { questions: [{ question: 'Which branch?' }] }, 'User answered: main');
+  const spanMessages = [piUser(ASK), ...errored, ...empty, ...answered];
+  const failedRound = spanMessages.map((message, i) => entry(`r${i}`, message));
+  const deps = charterOn();
+  // This is the configured pin guarantee, not indefinite retention after expiry or cap demotion.
+  // A rejecting scorer must not hide a protected round just because it is not a charter answer.
+  deps.makeAsker = () => new FakeAsker(allZero);
+  const c = compactionOf(await handleCompact(
+    piEvent({ branchEntries: failedRound, preparation: { messagesToSummarize: spanMessages } }),
+    piCtx(),
+    deps,
+  ));
+  assert.ok(c.summary.includes('Q: Which branch?\nA: User answered: main'), 'a successful round is still carried by the charter');
+  assert.equal(c.summary.split('Q: Which branch?\nA: User answered: main').length - 1, 1, 'the successful round is not repeated by the pool');
+  assert.ok(c.summary.includes(ERRORED_Q), 'the errored question is still visible');
+  assert.ok(c.summary.includes(ERRORED_A), 'the error result is still visible');
+  assert.ok(c.summary.includes(EMPTY_Q), 'the empty-answer question is still visible');
+  assert.ok(!c.summary.includes(`Q: ${ERRORED_Q}\nA:`), 'the errored round is not a charter answer entry');
+  assert.equal(c.details.jev.charter_stats.answered, 1, 'only the successful round is charter-carried');
 });
 
 test('the judge reads the same conversation with the charter on as off: operator messages stay in its view', async () => {

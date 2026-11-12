@@ -4,10 +4,10 @@
  * branch through `ctx.sessionManager` and never writes.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { Type } from 'typebox';
-import { callByHash, expand } from '../core/expand.js';
+import { callByHash, expand, EXPAND_MAX_LIMIT } from '../core/expand.js';
 import { PENDING_RESULT } from '../core/segments.js';
 import { branchMessages } from './branch.js';
 
@@ -28,16 +28,38 @@ type BranchSource = { cwd?: string; sessionManager?: { getBranch?: () => unknown
 /**
  * For a call that named a file: how the file on disk now compares with what the call saw
  * (spec: Recoverable rest). A write is compared exactly; for anything else the file counts as
- * unchanged only when it still contains the call's result verbatim.
+ * unchanged only when it still contains the call's result verbatim. The comparison is a one-line
+ * note, so it is strictly bounded: a non-regular file (a FIFO would block the whole tool) or a
+ * file over the comparison limit is never read; the note says the comparison was skipped. The
+ * path is opened non-blocking first and inspected through that same descriptor, so a concurrent
+ * swap of the path (for a FIFO, say) cannot slip between the check and the read; a file within
+ * the limit is read once, at most its fstat-reported size, so a file growing afterwards reads
+ * short and fails toward "has changed", never toward "still matches".
  */
 export function fileNote(tool: string, args: unknown, resultText: string | undefined, cwd: string | undefined): string | undefined {
   const a = typeof args === 'object' && args !== null ? (args as Record<string, unknown>) : {};
   const raw = typeof a.path === 'string' ? a.path.replace(/^@/, '') : undefined;
   if (!raw) return undefined;
   const path = isAbsolute(raw) || cwd === undefined ? raw : resolve(cwd, raw);
-  if (!existsSync(path)) return `NOTE: ${raw} no longer exists on disk.`;
   let now: string;
-  try { now = readFileSync(path, 'utf8'); } catch { return `NOTE: ${raw} could not be read now; re-read it before any edit.`; }
+  let fd: number;
+  try {
+    // Non-blocking so a path swapped for a FIFO after the open cannot hang the tool.
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return `NOTE: ${raw} no longer exists on disk.`;
+    return `NOTE: ${raw} could not be read now; re-read it before any edit.`;
+  }
+  try {
+    // Inspect the descriptor actually opened, never a pathname stat that a swap can invalidate.
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) return `NOTE: ${raw} is not a regular file; it was not compared with what this call saw; re-read it before any edit.`;
+    if (stat.size > EXPAND_MAX_LIMIT) return `NOTE: ${raw} is larger than the ${EXPAND_MAX_LIMIT}-byte comparison limit; it was not compared with what this call saw; re-read it before any edit.`;
+    const buffer = Buffer.alloc(stat.size);
+    const read = readSync(fd, buffer, 0, stat.size, 0);
+    now = buffer.subarray(0, read).toString('utf8');
+  } catch { return `NOTE: ${raw} could not be read now; re-read it before any edit.`; }
+  finally { closeSync(fd); }
   const same = tool === 'write' && typeof a.content === 'string'
     ? now === a.content
     : resultText !== undefined && resultText.trim().length > 0 && now.includes(resultText.trim());

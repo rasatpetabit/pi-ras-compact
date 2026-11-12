@@ -32,6 +32,7 @@ export const MANIFEST_FILES: readonly string[] = [
   'decision-service/test_threads.py',
   'decision-service/README.md',
   'docs/backend-label-samples.txt',
+  'docs/testing.md',
   'scripts/backend-label-samples.mts',
   'scripts/tree-hash.ts',
   'scripts/export-public-release.mts',
@@ -45,7 +46,7 @@ export const MANIFEST_DIRS: readonly string[] = ['src', 'test'];
  * The test command written into the exported package.json: the snapshot carries its own
  * test tree, so `npm test` runs standalone with no external archives or helper scripts.
  */
-export const STANDALONE_TEST_SCRIPT = 'node --import tsx --test test/*.test.ts';
+export const STANDALONE_TEST_SCRIPT = 'env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test --test-concurrency=4 test/*.test.ts';
 
 /** Built from fragments so this file itself never contains the artefact suffix it bans. */
 const PYC_SUFFIX = ['.p', 'yc'].join('');
@@ -67,6 +68,7 @@ const INTERNAL_TEST_FILES: ReadonlySet<string> = new Set([
   'test/jev-ledger.test.ts',
   'test/local-eval.test.ts',
   'test/replay-generations.test.ts',
+  'test/screen-receipt-guard.test.ts',
   'test/shadow-replay.test.ts',
   'test/warrant-eval.test.ts',
 ]);
@@ -182,6 +184,8 @@ export function exportPublicRelease(rootDir: string, outDir: string): ExportResu
   const pkgPath = join(out, 'package.json');
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { scripts?: Record<string, string> };
   pkg.scripts = { ...pkg.scripts, test: STANDALONE_TEST_SCRIPT };
+  // These profiles require the private eval tree, which is intentionally not exported.
+  for (const name of ['test:identity', 'test:controller', 'test:archive']) delete pkg.scripts[name];
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
   // Sweep: refuse to return an output that still contains anything the rules ban.

@@ -1,4 +1,5 @@
 import type { Message } from '../vendor/pi-jev/vendor/fast-jev-compaction/index.js';
+import { carriedByCharter } from './charter.js';
 import { carriedReadPath, instructionReader, isInstructionFile, type InstructionMatch } from './instruction.js';
 import { judge, statusAt, VERDICT_ID, type CoreAsker, type JudgeRound, type Verdict } from './judge.js';
 import { PIN_CLASSES, type PinClass } from './pins.js';
@@ -11,7 +12,7 @@ import {
   type RenderOptions,
   type SegmentStatus,
 } from './render.js';
-import { CARRY_VERSION, foreignSegments, spanToSegments, type Carry, type Segment } from './segments.js';
+import { CARRY_VERSION, foreignSegments, PENDING_RESULT, spanToSegments, type Carry, type Segment } from './segments.js';
 
 export interface CoreOptions {
   /**
@@ -222,7 +223,10 @@ export async function compactSpan(input: CompactInput, options: CoreOptions, ask
   // future references, all of it one session where the judge kept 36 calls instead of 42).
   const inCharter = (segment: Segment): boolean =>
     options.charter === true &&
-    (segment.kind === 'user' || (segment.kind === 'call' && segment.call !== undefined && options.decisionTools.has(segment.call.tool)));
+    (segment.kind === 'user'
+      ? carriedByCharter(segment.text, options.decisionTools)
+      : segment.kind === 'call' && segment.call !== undefined && segment.call.result !== PENDING_RESULT
+        && carriedByCharter(segment.text, options.decisionTools, segment.call));
   const carried: Segment[] = carriedAll;
   const instruction: InstructionMatch = {
     tools: options.instructionTools,

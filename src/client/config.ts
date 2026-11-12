@@ -266,7 +266,7 @@ export function isOpenAIDecisionsEndpoint(value: unknown): value is string {
 
 export function effectiveAskerModel(config: JevConfig): string {
   if (config.api.backend !== 'local') return config.api.model;
-  if (!['clm', 'openjev', 'anyjev'].includes(config.api.localModel ?? '')) throw new Error('Local decision model is not configured');
+  if (!['clm', 'openjev', 'anyjev', 'h2o-lightning-4b'].includes(config.api.localModel ?? '')) throw new Error('Local decision model is not configured');
   return config.api.localModel!;
 }
 
@@ -324,7 +324,9 @@ function check(rule: Rule, value: unknown): boolean {
     case 'fallback':
       return value === 'typesafe' || value === 'none';
     case 'local-model':
-      return value === 'clm' || value === 'openjev' || value === 'anyjev';
+      // h2o-lightning-4b: the live RTX PRO 4000 H2O scorer (jev-h2o.service), pinned by
+      // local_revision. An exact identity, not a free-form model selector.
+      return value === 'clm' || value === 'openjev' || value === 'anyjev' || value === 'h2o-lightning-4b';
     case 'path':
       // Absolute or home-relative only: a relative path would follow each process's cwd,
       // splitting one day's spend across several ledgers.

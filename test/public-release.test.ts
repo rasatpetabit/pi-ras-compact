@@ -115,6 +115,11 @@ test('every file the exporter ships is free of internal references', () => {
 
   const exportedPkg = JSON.parse(readFileSync(join(snapshot, 'package.json'), 'utf8')) as { scripts?: Record<string, string> };
   assert.equal(exportedPkg.scripts?.test, STANDALONE_TEST_SCRIPT, 'the snapshot must test standalone');
+  assert.match(exportedPkg.scripts?.test ?? '', /--test-concurrency=4(?:\s|$)/, 'the public default retains the measured worker bound');
+  for (const name of ['test:identity', 'test:controller', 'test:archive']) {
+    assert.equal(exportedPkg.scripts?.[name], undefined, `${name} must not advertise an omitted private eval`);
+  }
+  assert.ok(files.includes('docs/testing.md'), 'the published README testing link must resolve');
 });
 
 test('every relative import in the snapshot resolves inside the snapshot', () => {

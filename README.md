@@ -106,15 +106,11 @@ last non-undefined `session_before_compact` result, so keep this package last in
   - `src/client/` holds the config, HTTP and telemetry;
   - `src/core/` is harness-neutral;
   - `src/pi/extension.ts` is the Pi hook.
-- **Tests:** `env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR npm test` from the package
-  root, plus the
-  cache-controller acceptance outside the `test/*.test.ts` glob:
-  `env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test eval/cache/controller-acceptance.mts`
-  (see `eval/cache/README.md`). Telemetry eval overrides belong only to dedicated eval harnesses.
-  A change that must leave production behaviour unchanged also runs the production-config
-  byte-identity check, `env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test
-  eval/production-identity/identity.test.mts`, which drives the real hook and clients with the
-  committed config and compares request bytes, summaries and logs with a recorded golden.
+- **Tests:** `npm test` from the package root. It unsets telemetry eval overrides, runs the
+  unit files, the production-identity byte guard and the cache-controller acceptance at Node
+  `--test-concurrency=4`, then the offline RTX archive check. Focused commands, live harnesses
+  that are not part of that run, and how to inspect an identity diff without regenerating the
+  golden are in `docs/testing.md`. Telemetry eval overrides belong only to dedicated eval harnesses.
 
 ## Analysing compaction decisions
 
@@ -324,10 +320,21 @@ this deterministic result, while failures on paths requiring scores still cancel
 
 ## Live local backend
 
-Live since 2026-09-27: `/compact` asks openjev 27B on a gpu-host (FP16 from the BF16 checkpoint,
-TP4 compiled on GPUs 4–7, 40K context, `--http-threads 8`, its own port 18360 outside the evaluation
-relays' 18340–18352), with TypeSafe as the automatic fallback. `local_revision` pins the checkpoint:
-an answer from any other revision behind the same endpoint and name is refused as a bad answer.
+The fleet backend remains **OpenJev 27B**, with TypeSafe fallback and the qualified OpenAI
+Decisions charter gate unchanged. The unqualified H2O proposal is preserved separately in
+`config/jev.backend.h2o-candidate.toml`; that filename is not auto-loaded. Client support and the
+relay unit do not qualify or activate it. See `eval/h2o-cutover-20261112/README.md` for the evidence
+and outstanding RTX outcome.
+
+`local_revision` pins the checkpoint. An answer from any other revision behind the
+same endpoint and name is a service failure (`http`), so the configured TypeSafe fallback
+runs once. It is not accepted as a successful local compaction. A malformed answer is `parse`
+and does not take that fallback (`test/local-live.test.ts`).
+
+Live since 2026-09-27: `/compact` asks openjev 27B on
+a gpu-host (FP16 from the BF16 checkpoint, TP4 compiled on GPUs 4–7, 40K context, `--http-threads 8`,
+its own port 18360 outside the evaluation relays' 18340–18352), through
+`jev-local-relay.service` at `127.0.0.1:18390`.
 
 - **Config:** `config/jev.backend.toml`, merged over `jev.toml` and `jev.overlay.toml` by this code
   only. A Pi session that started before the change never reads it and keeps TypeSafe until it

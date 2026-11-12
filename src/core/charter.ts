@@ -215,10 +215,6 @@ export function verifyEntry(entry: CharterEntry, source: string, hash: (text: st
   return withMarkers(entry.entryId, source, entry.pasted) === entry.text;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Capture
-// ---------------------------------------------------------------------------------------------
-
 /** The questions of an ask_user_question-style call, as the agent wrote them. */
 function questionsOf(args: unknown): string[] {
   if (typeof args !== 'object' || args === null) return [];
@@ -231,6 +227,26 @@ function questionsOf(args: unknown): string[] {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Capture
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Exactly the coverage `captureCharter` gives the charter, as one predicate so the pool exclusion
+ * in the pruning core can never exclude a segment the charter did not actually capture. An
+ * operator message is carried when its text is not blank; a decision-tool call is carried only
+ * when its answer arrived, is not an error and is not empty. An errored or empty round stays out
+ * of the charter and must therefore stay visible in the pool.
+ */
+export function carriedByCharter(
+  text: string,
+  decisionTools: ReadonlySet<string>,
+  call?: { tool: string; result: string; isError: boolean },
+): boolean {
+  if (call === undefined) return text.trim().length > 0;
+  return decisionTools.has(call.tool) && !call.isError && call.result.trim().length > 0;
 }
 
 /**
@@ -246,7 +262,7 @@ export function captureCharter(messages: readonly BranchMessage[], options: Char
   messages.forEach((m, order) => {
     if (m.role === 'user') {
       const source = m.text;
-      if (source.trim().length === 0) return;
+      if (!carriedByCharter(source, options.decisionTools)) return;
       const pasted = detectPasted(source, options, outputs);
       entries.push({
         id: `u:${m.entryId}`,
@@ -264,7 +280,8 @@ export function captureCharter(messages: readonly BranchMessage[], options: Char
     for (const call of m.toolCalls) {
       if (!options.decisionTools.has(call.name)) continue;
       const result = results.get(call.id);
-      if (!result || result.isError || result.text.trim().length === 0) continue;
+      if (!result || !carriedByCharter(result.text, options.decisionTools,
+        { tool: call.name, result: result.text, isError: result.isError })) continue;
       const qs = questionsOf(call.args);
       // The answer text is the tool result, verbatim. The questions are the agent's own words
       // and are shown only to make the answer readable.

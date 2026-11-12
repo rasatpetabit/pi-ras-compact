@@ -12,8 +12,9 @@
     "url": "https://github.com/rasatpetabit/pi-ras-compact/issues"
   },
   "scripts": {
-    "test": "node --import tsx --test test/*.test.ts",
-    "test:unit": "node --import tsx --test test/*.test.ts",
+    "test": "env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test --test-concurrency=4 test/*.test.ts",
+    "test:unit": "env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test --test-concurrency=4 test/*.test.ts",
+    "test:contract": "env -u JEV_TELEMETRY_SOURCE -u JEV_TELEMETRY_EVAL_DIR node --import tsx --test --test-concurrency=4 test/charter-integration.test.ts test/compact-boundary.test.ts test/compact-restorable.test.ts test/local-live.test.ts",
     "release:verify": "node --import tsx scripts/verify-public-release.mts"
   },
   "license": "MIT",

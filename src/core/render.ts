@@ -46,7 +46,7 @@ export function modifyStub(segment: Segment, options: RenderOptions): string | u
   return undefined;
 }
 
-export const SUMMARY_HEADER = `${SUMMARY_HEADER_PREFIX}verbatim by Jev selective compaction. A cut or stubbed tool result or argument names the jev_expand call that restores it exactly; call it instead of re-running the tool.`;
+export const SUMMARY_HEADER = `${SUMMARY_HEADER_PREFIX}verbatim by Jev selective compaction. A cut or stubbed tool result or argument names the jev_expand call that restores it exactly; call it instead of re-running the tool. Counts in this summary describe what was dropped or stubbed, not remaining context window; never infer or assert your context occupancy from them.`;
 
 /** Resolve old carries in the same order as result truncation: id, valid source hash, neither. */
 function restoreId(id?: string, srcHash?: string): string | undefined {

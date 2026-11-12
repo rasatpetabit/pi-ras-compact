@@ -6,12 +6,13 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parse } from 'smol-toml';
 import { backendPath, defaultConfigPath, loadConfig, overlayPath, validateConfig, type JevConfig } from '../src/client/config.js';
-import { JevError } from '../src/client/jev-client.js';
+import { createCompactionAsker } from '../src/client/asker.js';
+import { JEV_ENDPOINT, JevError } from '../src/client/jev-client.js';
 import { LocalDecisionClient, SERVICE_DEADLINE_CAP_MS } from '../src/client/local-client.js';
 import { flushTelemetry } from '../src/client/ledger.js';
-import { handleCompact, isLocalServiceFailure } from '../src/pi/extension.js';
+import { handleCompact, isLocalServiceFailure, isPiCliProcess } from '../src/pi/extension.js';
 import { FakeAsker, allOnes } from './support/fake-asker.js';
-import { piCtx, piEvent, testDeps } from './support/pi-event.js';
+import { piCall, piCtx, piEvent, piUser, testDeps } from './support/pi-event.js';
 import { testConfig } from './support/config.js';
 import { scratchDir } from './support/scratch.js';
 
@@ -211,6 +212,7 @@ test('the committed backend file selects the live local service with the TypeSaf
   assert.ok(live.ok, JSON.stringify(live));
   if (!existsSync(backendPath(defaultConfigPath()))) return; // a checkout without the live switch
   assert.equal(live.config.api.backend, 'local');
+  // The unqualified H2O proposal has a separate filename and must not change the default route.
   assert.equal(live.config.api.localEndpoint, 'http://127.0.0.1:18390/v1/systemone-local');
   assert.equal(live.config.api.localModel, 'openjev');
   assert.equal(live.config.api.fallback, 'typesafe');
@@ -286,4 +288,215 @@ test('the footer says TypeSafe is being tried while the hosted retry runs', asyn
   assert.ok(result && 'compaction' in result);
   assert.match(during ?? '', /→ TypeSafe hosted/);
   assert.match(status.get('jev-compaction') ?? '', /^✓ Jev \[TypeSafe hosted\] · activity unknown/);
+});
+
+/** Authored five-level staleness answer. Not a production score. */
+const STALE = { type: 'score', score: 4, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 0, '3': 0, '4': 1 } };
+function fixedAnswers(body: string): Record<string, unknown> {
+  const req = JSON.parse(body) as { model: string; questions: Record<string, { type: string; criteria?: Record<string, unknown> | unknown[] }> };
+  const answers: Record<string, unknown> = {};
+  for (const [id, question] of Object.entries(req.questions)) {
+    if (question.type === 'noul') answers[id] = { type: 'noul', noul: 1 };
+    else if (question.type === 'score') {
+      if (!Array.isArray(question.criteria) || question.criteria.length !== 5) throw new Error(`unexpected score shape for ${id}`);
+      answers[id] = STALE;
+    } else if (question.type === 'choice' && question.criteria && !Array.isArray(question.criteria)) {
+      const labels = Object.keys(question.criteria);
+      if (labels.length < 2) throw new Error(`unexpected choice shape for ${id}`);
+      const choice = labels.includes('none') ? 'none' : labels[0]!;
+      answers[id] = { type: 'choice', choice, confidence: 1, probabilities: Object.fromEntries(labels.map(label => [label, label === choice ? 1 : 0])) };
+    } else throw new Error(`unexpected question ${id}`);
+  }
+  return { model: req.model, answers };
+}
+const KEPT = 'Keep the relay bound to loopback after a local outage.';
+const READ = 'loopback bind confirmed';
+const WIRE_T0 = '1970-01-01T00:00:00.000Z';
+function wireEvent() {
+  // The trailing text keeps the read off the boundary pin, so the pass has to ask the service.
+  const span = [
+    piUser(KEPT),
+    ...piCall('note', 'read', { path: 'relay.txt' }, READ),
+    { role: 'assistant', content: [{ type: 'text', text: 'The relay note is the fact to keep.' }], timestamp: 0 },
+  ];
+  const branch = span.map((message, i) => ({ type: 'message', id: `w${i}`, parentId: null, timestamp: WIRE_T0, message }));
+  return piEvent({ branchEntries: branch, preparation: { messagesToSummarize: span, fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() } } });
+}
+async function wireServer(handler: (body: string) => { status: number; body: string }) {
+  let hits = 0;
+  const server = createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    hits += 1;
+    const outcome = handler(Buffer.concat(chunks).toString('utf8'));
+    res.writeHead(outcome.status, { 'content-type': 'application/json' });
+    res.end(outcome.body);
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    hits: () => hits,
+    url: `http://127.0.0.1:${port}/v1/systemone-local`,
+    close: async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); },
+  };
+}
+function wireConfig(url: string) {
+  return testConfig(c => {
+    c.compaction.maxAfterShare = 0.5;
+    c.compaction.charter = true;
+    c.api.backend = 'local';
+    c.api.localModel = 'openjev';
+    c.api.localEndpoint = url;
+    c.api.localRevision = 'fixture-rev-20261112';
+    c.api.fallback = 'typesafe';
+    c.api.maxRetries = 0;
+    c.api.timeoutMs = 5000;
+    c.api.retryBudgetMs = 5000;
+    c.api.localTimeoutMs = 5000;
+  });
+}
+async function withExternalMock(external: (body: string) => string, fn: (order: string[]) => Promise<void>) {
+  const order: string[] = [];
+  const real = globalThis.fetch;
+  const previous = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = 'wire-test-not-a-key';
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith('http://127.0.0.1:')) {
+      order.push('local');
+      return real(input, init);
+    }
+    let host = 'unparsed';
+    try { host = new URL(url).host; } catch { /* reported below */ }
+    if (url !== JEV_ENDPOINT) throw new Error(`refusing unexpected host ${host}`);
+    order.push('external');
+    return new Response(external(String(init?.body ?? '')), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    await fn(order);
+  } finally {
+    globalThis.fetch = real;
+    if (previous === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previous;
+  }
+}
+
+test('a down local service is followed by exactly one hosted pass over the external network', async () => {
+  const local = await wireServer(() => ({ status: 503, body: '{}' }));
+  const exit = process.exitCode;
+  try {
+    await withExternalMock(body => JSON.stringify(fixedAnswers(body)), async order => {
+      const config = wireConfig(local.url);
+      const notes: string[] = [];
+      const status = new Map<string, string | undefined>();
+      const deps = testDeps({
+        config,
+        now: () => 0,
+        makeAsker: (c, hash, signal, context) => createCompactionAsker(c, hash, signal, context),
+      });
+      const result = await handleCompact(wireEvent(), piCtx(notes, 1_048_576, status, { mode: 'print', hasUI: false }), deps);
+      assert.ok(result && 'compaction' in result, JSON.stringify(result));
+      assert.ok(result.compaction.summary.includes(KEPT), 'the operator instruction survives the hosted pass');
+      assert.ok(result.compaction.summary.includes(READ), 'the kept read survives the hosted pass');
+      const jev = result.compaction.details.jev;
+      assert.equal(jev.backend, 'typesafe');
+      assert.equal(jev.model, config.api.model);
+      assert.equal(jev.fallback_from, 'local');
+      assert.equal(jev.fallback_reason, 'http');
+      assert.notEqual(jev.backend, 'local');
+      assert.ok(notes.some(note => note.includes('→ TypeSafe hosted')), notes.join(' | '));
+      assert.match(status.get('jev-compaction') ?? '', /^✓ Jev \[TypeSafe hosted\]/);
+      const lines = await rows(config);
+      assert.deepEqual(lines.map(line => line.resolution), ['hosted_retry', 'jev']);
+      assert.equal(lines[0].backend, 'local');
+      assert.equal(lines[0].reason, 'http');
+      assert.equal(lines[1].backend, 'typesafe');
+      assert.equal(lines[1].fallback_from, 'local');
+      await flushTelemetry();
+      const calls = readFileSync(config.telemetry.path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.ok(calls.some(call => call.backend === 'local' && call.outcome === 'http'));
+      assert.equal(calls.some(call => call.backend === 'local' && call.outcome === 'ok'), false);
+      assert.ok(calls.some(call => call.backend === 'typesafe' && call.outcome === 'ok'));
+      assert.match(order.join(','), /^local(,local)*,external(,external)*$/);
+      assert.ok(local.hits() > 0);
+      assert.equal(isPiCliProcess(), false);
+      assert.equal(process.exitCode, exit, 'a successful fallback must not mark a non-CLI process');
+    });
+  } finally {
+    process.exitCode = exit;
+    await local.close();
+  }
+});
+
+test('revision mismatch is not a successful local compaction', async () => {
+  const local = await wireServer(body => ({ status: 200, body: JSON.stringify({ ...fixedAnswers(body), revision: 'other-revision' }) }));
+  try {
+    await withExternalMock(body => JSON.stringify(fixedAnswers(body)), async order => {
+      const config = wireConfig(local.url);
+      const notes: string[] = [];
+      const status = new Map<string, string | undefined>();
+      const deps = testDeps({
+        config,
+        now: () => 0,
+        makeAsker: (c, hash, signal, context) => createCompactionAsker(c, hash, signal, context),
+      });
+      const result = await handleCompact(wireEvent(), piCtx(notes, 1_048_576, status, { mode: 'print', hasUI: false }), deps);
+      assert.ok(result && 'compaction' in result, JSON.stringify(result));
+      assert.ok(result.compaction.summary.includes(KEPT));
+      assert.ok(result.compaction.summary.includes(READ));
+      const jev = result.compaction.details.jev;
+      assert.equal(jev.backend, 'typesafe', 'a wrong revision must not be recorded as the local service succeeding');
+      assert.equal(jev.model, config.api.model);
+      assert.equal(jev.fallback_from, 'local');
+      assert.equal(jev.fallback_reason, 'http');
+      assert.ok(notes.some(note => note.includes('→ TypeSafe hosted')), notes.join(' | '));
+      const lines = await rows(config);
+      assert.deepEqual(lines.map(line => line.resolution), ['hosted_retry', 'jev']);
+      await flushTelemetry();
+      const calls = readFileSync(config.telemetry.path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.equal(calls.some(call => call.backend === 'local' && call.outcome === 'ok'), false, 'the wrong revision is not an accepted local response');
+      assert.ok(calls.some(call => call.backend === 'local' && call.outcome === 'http'));
+      assert.match(order.join(','), /^local(,local)*,external(,external)*$/);
+    });
+  } finally { await local.close(); }
+});
+
+test('a malformed local answer cancels instead of falling back or succeeding', async () => {
+  const local = await wireServer(body => {
+    const req = JSON.parse(body) as { model: string };
+    return { status: 200, body: JSON.stringify({ model: req.model, revision: 'fixture-rev-20261112', answers: { unanswered: { type: 'noul', noul: 1 } } }) };
+  });
+  const exit = process.exitCode;
+  try {
+    await withExternalMock(() => { throw new Error('hosted fallback is forbidden for a malformed answer'); }, async order => {
+      const config = wireConfig(local.url);
+      const notes: string[] = [];
+      const status = new Map<string, string | undefined>();
+      const deps = testDeps({
+        config,
+        now: () => 0,
+        makeAsker: (c, hash, signal, context) => createCompactionAsker(c, hash, signal, context),
+      });
+      const result = await handleCompact(wireEvent(), piCtx(notes, 1_048_576, status, { mode: 'print', hasUI: false }), deps);
+      assert.deepEqual(result, { cancel: true });
+      assert.equal(order.includes('external'), false, order.join(','));
+      assert.match(order.join(','), /^local(,local)*$/);
+      assert.ok(notes.some(note => /failed \(parse\)/.test(note)), notes.join(' | '));
+      assert.ok(notes.some(note => note.includes('Pi summary not used')), notes.join(' | '));
+      assert.match(status.get('jev-compaction') ?? '', /Pi summary not used/);
+      const lines = await rows(config);
+      assert.deepEqual(lines.map(line => line.resolution), ['cancelled']);
+      assert.equal(lines[0].backend, 'local');
+      assert.equal(lines[0].reason, 'parse');
+      await flushTelemetry();
+      const calls = readFileSync(config.telemetry.path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.ok(calls.some(call => call.backend === 'local' && call.outcome === 'parse'));
+      assert.equal(calls.some(call => call.outcome === 'ok'), false);
+      assert.equal(isPiCliProcess(), false);
+      assert.equal(process.exitCode, exit, 'this process is not the Pi CLI, so a cancel must not change its exit code');
+    });
+  } finally {
+    process.exitCode = exit;
+    await local.close();
+  }
 });
